@@ -34,12 +34,16 @@ function FunctionBuilder()
 	this.FunctionName = "";
 	// The number of parameters for functions
 	this.ParameterCount  = 0,
+	// The number of return statements for the function
+	this.ReturnStatementsCount = 0;
 	// Number of if statements/loops + 1
 	this.SimpleCyclomaticComplexity = 0;
+	// The max length of a message chain in a function.
+	this.MaxMessageChainsCount = 0;
 	// The max depth of scopes (nested ifs, loops, etc)
-	this.MaxNestingDepth    = 0;
+	//this.MaxNestingDepth    = 0;
 	// The max number of conditions if one decision statement.
-	this.MaxConditions      = 0;
+	//this.MaxConditions      = 0;
 
 	this.report = function()
 	{
@@ -47,14 +51,13 @@ function FunctionBuilder()
 		   (
 		   	"{0}(): {1}\n" +
 		   	"============\n" +
-			   "SimpleCyclomaticComplexity: {2}\t" +
-				"MaxNestingDepth: {3}\t" +
-				"MaxConditions: {4}\t" +
-				"Parameters: {5}\n\n"
+			   	"SimpleCyclomaticComplexity: {2}\t" +
+				"MaxMessageChains: {3}\t" +
+				"Parameters: {4}\t" +
+				"Return Statements: {5}\n\n"
 			)
 			.format(this.FunctionName, this.StartLine,
-				     this.SimpleCyclomaticComplexity, this.MaxNestingDepth,
-			        this.MaxConditions, this.ParameterCount)
+				     this.SimpleCyclomaticComplexity, this.MaxMessageChainsCount, this.ParameterCount, this.ReturnStatementsCount)
 		);
 	}
 };
@@ -63,6 +66,8 @@ function FunctionBuilder()
 function FileBuilder()
 {
 	this.FileName = "";
+	// The total number of comparision operators.
+	this.AllComparisonsCount = 0;
 	// Number of strings in a file.
 	this.Strings = 0;
 	// Number of imports in a file.
@@ -73,9 +78,10 @@ function FileBuilder()
 		console.log (
 			( "{0}\n" +
 			  "~~~~~~~~~~~~\n"+
-			  "ImportCount {1}\t" +
-			  "Strings {2}\n"
-			).format( this.FileName, this.ImportCount, this.Strings ));
+			  "ImportCount: {1}\t" +
+			  "Strings: {2}\t" +
+			  "AllComparisons: {3}\n"
+			).format( this.FileName, this.ImportCount, this.Strings, this.AllComparisonsCount ));
 	}
 }
 
@@ -92,8 +98,8 @@ function traverseWithParents(object, visitor)
             child = object[key];
             if (typeof child === 'object' && child !== null && key != 'parent') 
             {
-            	child.parent = object;
-					traverseWithParents(child, visitor);
+				child.parent = object;
+				traverseWithParents(child, visitor);
             }
         }
     }
@@ -109,11 +115,20 @@ function complexity(filePath)
 	// A file level-builder:
 	var fileBuilder = new FileBuilder();
 	fileBuilder.FileName = filePath;
-	fileBuilder.ImportCount = 0;
+	fileBuilder.ImportCount = (JSON.stringify(ast).match(/\"name\":\"require\"/g) || []).length;
+	fileBuilder.Strings = (JSON.stringify(ast).match(/\"type\":\"Literal\"\,\"value\":\"/g) || []).length;
+
+	const lt_count = (JSON.stringify(ast).match(/\"operator\":\"<\"/g) || []).length;
+	const gt_count = (JSON.stringify(ast).match(/\"operator\":\">\"/g) || []).length
+	const lte_count = (JSON.stringify(ast).match(/\"operator\":\"<=\"/g) || []).length
+	const gte_count = (JSON.stringify(ast).match(/\"operator\":\">=\"/g) || []).length
+
+	fileBuilder.AllComparisonsCount = lt_count+gt_count+lte_count+gte_count;
+
 	builders[filePath] = fileBuilder;
 
 	// Tranverse program with a function visitor.
-	traverseWithParents(ast, function (node) 
+	traverseWithParents(ast, function (node)
 	{
 		if (node.type === 'FunctionDeclaration') 
 		{
@@ -122,11 +137,80 @@ function complexity(filePath)
 			builder.FunctionName = functionName(node);
 			builder.StartLine    = node.loc.start.line;
 
+			const body = node.body.body
+			if(node.params) builder.ParameterCount = node.params.length;
+			if(node.body.body) builder.ReturnStatementsCount = (JSON.stringify(body).match(/\"type\":\"ReturnStatement\"/g) || []).length;
+
+			for(index in body) {
+				var subNode = body[index];
+				if(isDecision(subNode)) {
+					builder.SimpleCyclomaticComplexity += calcComplexity(subNode);
+				}
+			}
+
+			traverseWithParents(node, function(node) {
+				if(node.type == 'MemberExpression' || node.type == 'CallExpression') {
+					const len = getMaxMessageChain(node)
+					if(len > builder.MaxMessageChainsCount) builder.MaxMessageChainsCount = len;
+				}
+			});
+
+			builder.SimpleCyclomaticComplexity +=1;
+
 			builders[builder.FunctionName] = builder;
 		}
 
 	});
 
+}
+
+function getMaxMessageChain(node) {
+	var count = 1;
+
+	if(node.type == 'MemberExpression') {
+		count += getMaxMessageChain(node.object)
+	}
+
+	if(node.type == 'CallExpression') {
+		count += getMaxMessageChain(node.callee.object)
+	}
+
+	return count;
+}
+
+function calcComplexity(node) {
+	var count = 1;
+
+	if(node.consequent) {
+		for(index in node.consequent.body) {
+			var subNode = node.consequent.body[index]
+			if(isDecision(subNode)) {
+				var temp = calcComplexity(subNode);
+				count+=temp;
+			}
+		}
+	}
+
+	if(node.alternate) {
+		for(index in node.alternate.body) {
+			var subNode = node.alternate.body[index]
+			if(isDecision(subNode)) {
+				var temp = calcComplexity(subNode);
+				count+=temp;
+			}
+		}
+	}
+
+	if(node.body) {
+		for(index in node.body.body) {
+			var subNode = node.body.body[index]
+			if(isDecision(subNode)) {
+				var temp = calcComplexity(subNode);
+				count+=temp;
+			}
+		}
+	}
+	return count
 }
 
 // Helper function for counting children of node.
