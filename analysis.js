@@ -155,6 +155,7 @@ function complexity(filePath)
 				}
 			});
 
+			if(builder.MaxMessageChainsCount == 1) builder.MaxMessageChainsCount = 0;
 			builder.SimpleCyclomaticComplexity +=1;
 
 			builders[builder.FunctionName] = builder;
@@ -170,6 +171,7 @@ function getMaxMessageChain(node) {
 	if(node) {
 		count = 1;
 		if(node.type == 'MemberExpression') {
+			if(node.computed == true) count -= 1;
 			count += getMaxMessageChain(node.object)
 		}
 	
