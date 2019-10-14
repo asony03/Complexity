@@ -165,14 +165,17 @@ function complexity(filePath)
 }
 
 function getMaxMessageChain(node) {
-	var count = 1;
+	var count = 0;
 
-	if(node.type == 'MemberExpression') {
-		count += getMaxMessageChain(node.object)
-	}
-
-	if(node.type == 'CallExpression') {
-		count += getMaxMessageChain(node.callee.object)
+	if(node) {
+		count = 1;
+		if(node.type == 'MemberExpression') {
+			count += getMaxMessageChain(node.object)
+		}
+	
+		if(node.type == 'CallExpression') {
+			count += getMaxMessageChain(node.callee.object)
+		}
 	}
 
 	return count;
